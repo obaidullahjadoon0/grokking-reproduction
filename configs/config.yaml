@@ -1,0 +1,26 @@
+# ---- Data ----
+p: 97                    # modulus (prime works best - paper uses p=97)
+operation: "add"         # "add" | "sub" | "mul"
+train_fraction: 0.3      # fraction of all (a,b) pairs used for training (small = harder = more dramatic grokking)
+seed: 0
+
+# ---- Model ----
+d_model: 128
+n_heads: 4
+n_layers: 2
+d_ff: 512
+dropout: 0.0
+
+# ---- Training ----
+optimizer: "adamw"       # "adamw" | "adam" | "sgd"
+lr: 0.001
+weight_decay: 1.0        # THE key ingredient from the paper - try 0 to see what changes
+betas: [0.9, 0.98]
+batch_size: 512
+epochs: 5000
+device: "cpu"            # "cpu" | "cuda" (cuda if you have a free Colab GPU)
+log_every: 25            # log train/val metrics every N epochs
+
+# ---- Logging ----
+db_path: "db/runs.sqlite"
+run_name: "baseline"

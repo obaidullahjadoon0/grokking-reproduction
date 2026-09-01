@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+db/*.sqlite
+results/*.png
+results/*.pt
+.ipynb_checkpoints/
