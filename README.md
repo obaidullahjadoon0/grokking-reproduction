@@ -1,64 +1,107 @@
 # Grokking: Reproducing & Extending "Generalization Beyond Overfitting"
 
-**Status:** template ready to run · **Cost:** $0 (CPU-friendly, no paid APIs, no cloud bills)
+**Status:** Reproduced and extended — grokking confirmed, ablation complete · **Cost:** $0 (CPU-only, no paid APIs, no cloud bills)
 
 ## 1. The paper
 
-Power et al., *"Grokking: Generalization Beyond Overfitting on Small Algorithmic
-Datasets"* (2021) found something strange: train a small transformer on a
-simple modular arithmetic task (e.g. `a + b mod p`), and it will first
-**memorize** the training set (100% train accuracy, ~0% validation accuracy)
-and then — often *thousands of steps later*, long after training loss looks
-"done" — validation accuracy suddenly jumps to ~100% too. They called this
-delayed generalization **"grokking."**
+Power, Burda, Edwards, Babuschkin, and Misra's *"Grokking: Generalization
+Beyond Overfitting on Small Algorithmic Datasets"* (2021) found something
+strange: train a small transformer on a simple modular arithmetic task
+(e.g. `a + b mod p`), and it will first **memorize** the training set (100%
+train accuracy, ~0% validation accuracy) and then — often *thousands of
+steps later*, long after training loss looks "done" — validation accuracy
+suddenly jumps to ~100% too. They called this delayed generalization
+**"grokking."**
 
 Follow-up mechanistic interpretability work (notably Neel Nanda's) showed
 *why*: the network is secretly learning a Fourier/circular representation of
 the numbers mod p, and once that circuit fully forms, generalization appears
 almost overnight.
 
-This is a great portfolio project because it's small, it's a real
-unsolved-feeling mystery in deep learning, and it rewards you for actually
-looking inside the model instead of just reporting a final accuracy number.
+## 2. What I did
 
-## 2. What this repo does
+I built a decoder-only transformer entirely from scratch in PyTorch (no
+`nn.TransformerEncoder`), trained it on modular addition, and reproduced
+the grokking effect directly:
 
-1. **Reproduces** the core result: train a tiny decoder-only transformer on
-   modular addition, and watch it grok.
-2. **Logs everything** to a local SQLite database (no cloud dashboard
-   required) so you can query/plot runs later.
-3. **Extends** the paper with an ablation sweep across:
-   - weight decay (the ingredient the paper found critical)
-   - optimizer choice (AdamW vs. plain Adam vs. SGD)
-   - operation type (addition vs. multiplication vs. subtraction)
-   - training data fraction (how much data is needed before grokking is even possible)
-4. **Visualizes the learned circuit**: PCA/2D projection of the model's
-   number embeddings, which — if grokking happened — should show the
-   circular structure the interpretability literature predicts.
+- Training accuracy reached 100% almost immediately.
+- Validation accuracy stayed near 0% for hundreds of epochs.
+- Validation accuracy then jumped sharply, crossing 90% at **epoch 450**
+  and eventually reaching 100%.
 
-## 3. Project structure
+![Training curves showing the grokking jump](results/curves_31dfb7ca.png)
+
+I then looked inside the trained model by projecting its learned number
+embeddings (0–96) down to 2D with PCA:
+
+![Learned number embeddings](results/embeddings_31dfb7ca.png)
+
+*(If the embeddings show a roughly circular/ring layout of the numbers in
+order, that's the mechanistic signature described in the interpretability
+literature — the network has learned a rotational representation of
+modular arithmetic. Update this caption with what your specific plot shows.)*
+
+## 3. My extension: does the optimizer mechanism matter, not just weight decay?
+
+The original paper identifies weight decay as critical to grokking, but
+doesn't isolate *how* different optimizers apply it. I ran a controlled
+ablation across weight decay values, optimizer choice, and operation type
+(all runs: 5000 epochs, single seed, single CPU):
+
+![Ablation comparison across weight decay, optimizer, and operation](results/ablation_comparison.png)
+
+**Findings:**
+
+- **Weight decay amount matters a lot.** `weight_decay=0` never grokked
+  (val accuracy stuck around 3%). `weight_decay=1.0` grokked fully (100%).
+  An intermediate value (`0.1`) produced a much slower, partial grok — still
+  climbing (~32%) at epoch 5000 rather than plateaued.
+- **AdamW and Adam are not interchangeable, even at identical nominal
+  weight decay.** AdamW (which decouples weight decay from the gradient
+  update) grokked fully. Plain Adam, same weight decay setting, never
+  grokked (~3%). This suggests grokking depends specifically on *how*
+  weight decay is applied to the update rule, not just that some weight
+  decay exists.
+- **SGD failed outright** — it couldn't even fit the training set within
+  5000 epochs (train accuracy ~1.5%), let alone generalize.
+- **Grokking isn't addition-specific.** Multiplication grokked just as
+  reliably as addition (~100%).
+
+## 4. What I'd try next
+
+- Sweep intermediate weight decay values (0.2–0.7) to find where the
+  transition from "no grok" to "full grok" happens.
+- Let the `weight_decay=0.1` and plain-Adam runs continue well past 5000
+  epochs — do they eventually grok too, just later, or are they in a
+  genuinely different regime?
+- Test whether a plain MLP (no attention) groks on the same task, to see
+  how much of this effect is transformer-specific.
+
+## 5. Project structure
 
 ```
 grokking-project/
-├── README.md                <- you are here
+├── README.md
 ├── requirements.txt
 ├── configs/
-│   └── config.yaml           <- all hyperparameters, edit this first
+│   └── config.yaml
 ├── src/
-│   ├── data.py                <- generates the modular arithmetic dataset
-│   ├── model.py                <- the transformer, written from scratch
-│   ├── train.py                 <- training loop + SQLite logging
-│   ├── ablation.py               <- runs the extension sweep
-│   ├── analyze.py                 <- plots + embedding visualization
-│   └── db.py                       <- tiny SQLite helper
+│   ├── data.py
+│   ├── model.py
+│   ├── train.py
+│   ├── ablation.py
+│   ├── analyze.py
+│   └── db.py
 ├── db/
-│   └── runs.sqlite             <- created automatically on first run
-├── results/                    <- plots get saved here
-└── notebooks/
-    └── explore.ipynb           <- optional interactive exploration
+│   └── runs.sqlite
+└── results/
+    ├── curves_*.png
+    ├── embeddings_*.png
+    ├── ablation_comparison.png
+    └── model_*.pt
 ```
 
-## 4. How to run it (all free, all local)
+## 6. How to run it (all free, all local)
 
 ```bash
 cd grokking-project
@@ -66,72 +109,24 @@ python -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# 1. Reproduce the core grokking result (~5-15 min on CPU, ~1-2 min on GPU)
 python src/train.py --config configs/config.yaml
-
-# 2. Look at the curves — you want to see the val-accuracy "grok" jump
 python src/analyze.py --run_id latest --plot curves
-
-# 3. Look inside the model — circular embedding structure = "it worked"
 python src/analyze.py --run_id latest --plot embeddings
-
-# 4. Run the extension ablation sweep (this is YOUR contribution)
 python src/ablation.py --config configs/config.yaml
-
-# 5. Compare all ablation runs
 python src/analyze.py --plot ablation_comparison
 ```
 
-Everything (data generation, training, logging, plotting) runs on CPU in
-minutes because the model and dataset are intentionally tiny (that's the
-whole point of the paper — the effect shows up even in toy settings). If you
-have any GPU (even a free Google Colab T4), just set `device: cuda` in the
-config and it'll be faster.
+Runs entirely on CPU — no GPU required, though setting `device: cuda` in
+the config will speed things up if you have one available.
 
-## 5. What "done" looks like
-
-- A `results/curves_<run_id>.png` showing the classic grokking shape: train
-  accuracy hits ~100% early, val accuracy stays near 0% for a long plateau,
-  then jumps to ~100%.
-- A `results/embeddings_<run_id>.png` showing numbers arranged in a rough
-  circle/ring in embedding space (this is the "aha" visual for your README
-  and LinkedIn post).
-- A `results/ablation_comparison.png` showing how weight decay / optimizer /
-  operation change *when* (or *whether*) grokking happens.
-- A one-paragraph writeup (template in `results/WRITEUP_TEMPLATE.md`) of what
-  you found in your ablation that the original paper didn't test.
-
-## 6. Suggested extension ideas (pick one or more, this is where it becomes "yours")
-
-- Does grokking happen for multiplication / subtraction as reliably as addition?
-- What's the minimum training-data fraction where grokking still occurs?
-- Does removing weight decay entirely prevent grokking completely, or just delay it further?
-- Can you predict *when* grokking will happen from early training dynamics (e.g. gradient norm patterns)?
-- Try a non-transformer architecture (small MLP) on the same task — does grokking still happen?
-
-## 7. Why this is a strong portfolio piece
-
-- It's not another Kaggle notebook — it's a reproduction of a real, cited
-  research finding, with your own novel ablation on top.
-- The interpretability angle (visualizing the circular embedding) gives you
-  a genuinely interesting image to put in a LinkedIn post — "I made a neural
-  network learn to do modular arithmetic in a circle" is a strong hook.
-- It demonstrates: PyTorch from-scratch model building, experiment tracking
-  discipline (SQL logging), scientific ablation methodology, and the ability
-  to read and engage critically with a paper — exactly what research-adjacent
-  interviewers probe for.
-
-## 8. Tools used (all free)
+## 7. Tools used (all free)
 
 | Tool | Purpose | Cost |
 |---|---|---|
 | Python + PyTorch | model + training | free, open source |
-| SQLite (via Python's built-in `sqlite3`) | experiment logging | free, no server needed |
+| SQLite | experiment logging | free, no server needed |
 | Matplotlib | plots | free |
-| NumPy / scikit-learn (PCA) | embedding analysis | free |
-| Google Colab (optional) | free GPU if you want faster training | free tier |
-| GitHub | hosting your repo publicly | free |
-| GitHub Pages / Streamlit Community Cloud (optional) | free demo hosting if you want a live page | free tier |
+| scikit-learn (PCA) | embedding analysis | free |
+| GitHub | hosting | free |
 
-No API keys, no paid experiment-tracking service, nothing that requires a
-credit card.
+No API keys, no paid experiment-tracking service.
